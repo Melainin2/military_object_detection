@@ -1,21 +1,22 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
 from ultralytics import YOLO
+from huggingface_hub import hf_hub_download
 import shutil, os, cv2
 
-from fastapi.responses import FileResponse
+
 app = FastAPI()
 @app.get("/")
 def home():
     return FileResponse("frontend/index.html")
 
-from huggingface_hub import hf_hub_download
+
 
 model_path = hf_hub_download(
     repo_id="datasidahmed/military_object_detection",
     filename="best.pt"
 )
-
 model = YOLO(model_path)
 
 UPLOAD_DIR = "uploads"
