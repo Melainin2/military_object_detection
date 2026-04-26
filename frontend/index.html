@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Detection Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    margin: 0;
+    font-family: 'Segoe UI';
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: white;
+}
+
+/* HEADER */
+header {
+    text-align: center;
+    padding: 20px;
+    font-size: 32px;
+    font-weight: bold;
+}
+
+/* TOP */
+.top {
+    text-align: center;
+    margin: 20px;
+}
+
+button {
+    padding: 12px 25px;
+    border: none;
+    background: linear-gradient(45deg, #00c6ff, #0072ff);
+    color: white;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: 0.3s;
+}
+
+button:hover {
+    transform: scale(1.05);
+}
+
+/* GRID */
+.grid {
+    display: flex;
+    gap: 20px;
+    padding: 20px;
+}
+
+/* CARD */
+.card {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.4);
+}
+
+.card h2 {
+    margin-bottom: 15px;
+}
+
+/* IMAGES */
+img, canvas {
+    width: 100%;
+    border-radius: 10px;
+}
+
+/* RESULT */
+#result p {
+    margin: 5px 0;
+}
+
+/* FOOTER */
+.footer {
+    text-align: center;
+    margin: 20px;
+    opacity: 0.7;
+}
+</style>
+
+</head>
+
+<body>
+
+<header>🚀 AI Detection Dashboard</header>
+
+<div class="top">
+    <input type="file" id="fileInput">
+    <br><br>
+    <button onclick="uploadImage()">Predict</button>
+</div>
+
+<div class="grid">
+
+    <!-- RESULTS -->
+    <div class="card">
+        <h2>Results</h2>
+        <div id="result">No results yet...</div>
+        <canvas id="chart"></canvas>
+    </div>
+
+    <!-- ORIGINAL -->
+    <div class="card">
+        <h2>Original</h2>
+        <img id="preview">
+    </div>
+
+    <!-- DETECTION -->
+    <div class="card">
+        <h2>Detection</h2>
+        <canvas id="canvas"></canvas>
+    </div>
+
+</div>
+
+<div class="footer">
+    Built with 💡 by Future Data Scientist
+</div>
+
+<!-- ================= JS ================= -->
+
+<script>
+let chart = null;
+
+async function uploadImage() {
+
+    const fileInput = document.getElementById("fileInput");
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert("Select image first!");
+        return;
+    }
+
+    document.getElementById("result").innerHTML = "⏳ Processing...";
+
+    const preview = document.getElementById("preview");
+    preview.src = URL.createObjectURL(file);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        const response = await fetch("http://127.0.0.1:8000/predict", {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await response.json();
+
+        displayResults(data);
+        drawBoxes(data);
+        drawChart(data);
+
+    } catch (error) {
+        alert("Server error!");
+    }
+}
+</script>
+
+<script>
+function displayResults(data) {
+
+    const resultBox = document.getElementById("result");
+    resultBox.innerHTML = "";
+
+    if (!data.detections || data.detections.length === 0) {
+        resultBox.innerHTML = "❌ No military objects detected";
+        return;
+    }
+
+    resultBox.innerHTML = "✅ Military objects detected:<br><br>";
+
+    data.detections.forEach(det => {
+        resultBox.innerHTML += `
+        <p>🎯 <b>${det.class_name}</b> 
+        (${(det.confidence * 100).toFixed(1)}%)</p>`;
+    });
+}
+</script>
+
+<script>
+function drawBoxes(data) {
+
+    const img = document.getElementById("preview");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    if (img.complete) {
+        render();
+    } else {
+        img.onload = render;
+    }
+
+    function render() {
+
+        canvas.width = img.clientWidth;
+        canvas.height = img.clientHeight;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const scaleX = canvas.width / img.naturalWidth;
+        const scaleY = canvas.height / img.naturalHeight;
+
+        data.detections.forEach(det => {
+
+            if (!det.box) return;
+
+            let [x1, y1, x2, y2] = det.box;
+
+            x1 *= scaleX;
+            x2 *= scaleX;
+            y1 *= scaleY;
+            y2 *= scaleY;
+
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+            ctx.fillStyle = "red";
+            ctx.font = "14px Arial";
+
+            ctx.fillText(
+                `${det.class_name}`,
+                x1,
+                y1 > 10 ? y1 - 5 : y1 + 15
+            );
+        });
+    }
+}
+</script>
+
+<script>
+function drawChart(data) {
+
+    const counts = {};
+
+    data.detections.forEach(det => {
+        counts[det.class_name] = (counts[det.class_name] || 0) + 1;
+    });
+
+    const labels = Object.keys(counts);
+    const values = Object.values(counts);
+
+    const ctx = document.getElementById("chart").getContext("2d");
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Detected Objects',
+                data: values
+            }]
+        }
+    });
+}
+</script>
+
+</body>
+</html>
