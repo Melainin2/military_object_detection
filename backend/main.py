@@ -11,11 +11,11 @@ app = FastAPI()
 def home():
     return FileResponse("frontend/index.html")
 
-
-
 model_path = hf_hub_download(
     repo_id="datasidahmed/military_object_detection",
-    filename="best.pt"
+    filename="best.pt",
+    token=os.getenv("HF_TOKEN")  # تأكد من تعيين متغير البيئة HF_TOKEN الخاص بك في النظام الخاص بك
+
 )
 model = YOLO(model_path)
 
