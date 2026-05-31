@@ -47,6 +47,8 @@ app.add_middleware(
 # ===============================
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -138,6 +140,7 @@ def load_model():
 # ===============================
 @app.post("/predict")
 async def predict(file: UploadFile = File(...), request: Request = None):
+    upload_path = None
     try:
         client_ip = request.client.host if request and request.client else "unknown"
         filename = os.path.basename(file.filename or "")
@@ -146,12 +149,21 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
             return JSONResponse({"error": "Only JPG/PNG images are allowed"}, status_code=400)
 
+        if file.content_type not in ALLOWED_MIME_TYPES:
+            return JSONResponse({"error": "Invalid image MIME type"}, status_code=400)
+
         ext = filename.rsplit(".", 1)[-1]
         unique_name = f"{uuid.uuid4()}.{ext}"
         file_path = os.path.join(UPLOAD_DIR, unique_name)
+        upload_path = file_path
 
+        size = 0
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while chunk := await file.read(8192):
+                size += len(chunk)
+                if size > MAX_UPLOAD_SIZE:
+                    return JSONResponse({"error": "File too large (max 10 MB)"}, status_code=413)
+                buffer.write(chunk)
 
         img = cv2.imread(file_path)
         if img is None:
@@ -208,6 +220,9 @@ async def predict(file: UploadFile = File(...), request: Request = None):
     except Exception as e:
         logger.exception("Prediction failed")
         return JSONResponse({"error": "Internal server error"}, status_code=500)
+    finally:
+        if upload_path and os.path.exists(upload_path):
+            os.remove(upload_path)
 
 
 # ===============================
