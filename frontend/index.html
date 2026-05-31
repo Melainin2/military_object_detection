@@ -15,7 +15,7 @@
 // For production (Vercel), set to your Render backend URL:
 //   const BACKEND_URL = "https://your-app.onrender.com";
 // ============================================================
-const BACKEND_URL = "";
+const BACKEND_URL = "https://military-object-detection.onrender.com";
 </script>
 
 <style>
@@ -121,7 +121,7 @@ img, canvas {
 <header>🚀 AI Detection Dashboard</header>
 
 <div class="top">
-    <input type="file" id="fileInput">
+    <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp">
     <br><br>
     <button onclick="uploadImage()">Predict</button>
 </div>
@@ -159,7 +159,6 @@ img, canvas {
 let chart = null;
 
 async function uploadImage() {
-
     const fileInput = document.getElementById("fileInput");
     const file = fileInput.files[0];
 
@@ -168,50 +167,84 @@ async function uploadImage() {
         return;
     }
 
-    document.getElementById("result").innerHTML = "⏳ Processing...";
+    const validExts = [".jpg", ".jpeg", ".png", ".webp"];
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    if (!validExts.includes(ext)) {
+        alert("Only image files (JPG, JPEG, PNG, WEBP) are allowed.");
+        return;
+    }
 
+    const resultBox = document.getElementById("result");
     const preview = document.getElementById("preview");
     preview.src = URL.createObjectURL(file);
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const startTime = Date.now();
+    resultBox.innerHTML = "⏳ Processing...";
+
+    const timerId = setInterval(() => {
+        const sec = Math.floor((Date.now() - startTime) / 1000);
+        if (sec < 120) {
+            resultBox.innerHTML = `⏳ Processing... ${sec}s<br><small style="opacity:0.7">First prediction after a break may take up to 2 minutes (free hosting)</small>`;
+        } else {
+            resultBox.innerHTML = `⏳ Still processing... ${sec}s<br><small style="opacity:0.7">Almost done, please wait</small>`;
+        }
+    }, 1000);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
+        const formData = new FormData();
+        formData.append("file", file);
+
         const response = await fetch(BACKEND_URL + "/predict", {
             method: "POST",
-            body: formData
+            body: formData,
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
+        clearInterval(timerId);
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `Server error (${response.status})`);
+        }
 
         const data = await response.json();
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
 
-        displayResults(data);
+        displayResults(data, elapsed);
         drawBoxes(data);
         drawChart(data);
 
     } catch (error) {
-        alert("Server error!");
+        clearTimeout(timeoutId);
+        clearInterval(timerId);
+
+        if (error.name === "AbortError") {
+            resultBox.innerHTML = `<p>⚠️ Request timed out (3 minutes).</p><p><small>The free hosting tier is too slow for this image. Try a smaller image or try again later.</small></p><p><button onclick="uploadImage()">Retry</button></p>`;
+        } else {
+            resultBox.innerHTML = `<p>❌ ${error.message}</p><p><button onclick="uploadImage()">Retry</button></p>`;
+        }
     }
 }
 </script>
 
 <script>
-function displayResults(data) {
-
+function displayResults(data, elapsed) {
     const resultBox = document.getElementById("result");
-    resultBox.innerHTML = "";
+    let html = `<small style="opacity:0.6">⏱ ${elapsed}s</small><br>`;
 
     if (!data.detections || data.detections.length === 0) {
-        resultBox.innerHTML = "❌ No military objects detected";
+        resultBox.innerHTML = html + "❌ No military objects detected";
         return;
     }
 
-    resultBox.innerHTML = "✅ Military objects detected:<br><br>";
-
+    html += "✅ Military objects detected:<br><br>";
     data.detections.forEach(det => {
-        resultBox.innerHTML += `
-        <p>🎯 <b>${det.class_name}</b> 
-        (${(det.confidence * 100).toFixed(1)}%)</p>`;
+        html += `<p>🎯 <b>${det.class_name}</b> (${(det.confidence * 100).toFixed(1)}%)</p>`;
     });
+    resultBox.innerHTML = html;
 }
 </script>
 

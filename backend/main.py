@@ -48,7 +48,8 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg"}
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -146,11 +147,11 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         filename = os.path.basename(file.filename or "")
         logger.info("Predict request from %s — file: %s", client_ip, filename)
 
-        if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
-            return JSONResponse({"error": "Only JPG/PNG images are allowed"}, status_code=400)
+        if os.path.splitext(filename.lower())[1] not in ALLOWED_EXTENSIONS:
+            return JSONResponse({"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."}, status_code=400)
 
         if file.content_type not in ALLOWED_MIME_TYPES:
-            return JSONResponse({"error": "Invalid image MIME type"}, status_code=400)
+            return JSONResponse({"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."}, status_code=400)
 
         ext = filename.rsplit(".", 1)[-1]
         unique_name = f"{uuid.uuid4()}.{ext}"
