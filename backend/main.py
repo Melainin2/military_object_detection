@@ -47,6 +47,8 @@ app.add_middleware(
 # ===============================
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ===============================
 # Model (lazy loaded)
@@ -76,8 +78,6 @@ class_names = [
 @app.on_event("startup")
 def on_startup():
     logger.info("Starting AI Detection Dashboard...")
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     logger.info("Upload and output directories ready")
 
     hf_token = os.getenv("HF_TOKEN")
