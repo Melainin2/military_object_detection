@@ -57,7 +57,7 @@ app.add_middleware(
 # ===============================
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
-MAX_INFERENCE_SIZE = 640
+MAX_INFERENCE_SIZE = 320
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 YOLO_IMGSZ = 320
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
@@ -223,14 +223,15 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         # --- Inference (imgsz=320 for speed on 0.1 CPU) ---
         t_infer = time.time()
         try:
-            results = loaded_model(
-                img,
-                imgsz=YOLO_IMGSZ,
-                conf=0.25,
-                iou=0.5,
-                device="cpu",
-                verbose=False,
-            )
+            with torch.no_grad():
+                results = loaded_model(
+                    img,
+                    imgsz=YOLO_IMGSZ,
+                    conf=0.25,
+                    iou=0.5,
+                    device="cpu",
+                    verbose=False,
+                )
         except Exception as infer_err:
             logger.exception("Inference crashed after %.2fs", time.time() - t_infer)
             return JSONResponse({"error": "Model inference failed"}, status_code=500)
