@@ -1,0 +1,380 @@
+{
+  "timestamp": "2026-06-01T12:52:47.286236",
+  "version": "2.0.0+no_grad_fix",
+  "size_varied": {
+    "results": [
+      {
+        "label": "s_200x200",
+        "status": 200,
+        "elapsed_s": 53.89,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "s_320x240",
+        "status": 200,
+        "elapsed_s": 37.02,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "s_400x300",
+        "status": 200,
+        "elapsed_s": 49.47,
+        "body_len": 185,
+        "detections": 1,
+        "message": "Military objects detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "s_250x250",
+        "status": 200,
+        "elapsed_s": 34.72,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "s_300x400",
+        "status": 200,
+        "elapsed_s": 45.79,
+        "body_len": 186,
+        "detections": 1,
+        "message": "Military objects detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "m_800x600",
+        "status": 200,
+        "elapsed_s": 42.55,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "m_1024x768",
+        "status": 200,
+        "elapsed_s": 42.59,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "m_640x480",
+        "status": 200,
+        "elapsed_s": 41.3,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "m_1280x720",
+        "status": 200,
+        "elapsed_s": 44.22,
+        "body_len": 121,
+        "detections": 0,
+        "message": "No military object detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "m_900x600",
+        "status": 200,
+        "elapsed_s": 56.98,
+        "body_len": 184,
+        "detections": 1,
+        "message": "Military objects detected",
+        "x_render_routing": ""
+      },
+      {
+        "label": "l_1600x1200",
+        "status": 502,
+        "elapsed_s": 4.5,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": ""
+      },
+      {
+        "label": "l_1400x900",
+        "status": 503,
+        "elapsed_s": 3.13,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "l_1200x800",
+        "status": 503,
+        "elapsed_s": 2.58,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "l_1500x1000",
+        "status": 503,
+        "elapsed_s": 2.91,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "l_1000x750",
+        "status": 503,
+        "elapsed_s": 2.59,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      }
+    ],
+    "summary": {
+      "total": 15,
+      "success": 10,
+      "failed": 5,
+      "success_rate": "66.7%",
+      "avg_s": 44.85,
+      "max_s": 56.98,
+      "min_s": 34.72,
+      "p50_s": 44.22,
+      "p95_s": 56.98,
+      "total_detections": 3
+    }
+  },
+  "load_test": {
+    "results": [
+      {
+        "label": "load_01",
+        "status": 503,
+        "elapsed_s": 2.13,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_02",
+        "status": 503,
+        "elapsed_s": 2.95,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_03",
+        "status": 503,
+        "elapsed_s": 2.56,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_04",
+        "status": 503,
+        "elapsed_s": 2.06,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_05",
+        "status": 503,
+        "elapsed_s": 2.26,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_06",
+        "status": 503,
+        "elapsed_s": 2.06,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_07",
+        "status": 503,
+        "elapsed_s": 1.58,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_08",
+        "status": 503,
+        "elapsed_s": 1.42,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_09",
+        "status": 503,
+        "elapsed_s": 1.34,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_10",
+        "status": 503,
+        "elapsed_s": 1.75,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_11",
+        "status": 503,
+        "elapsed_s": 1.75,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_12",
+        "status": 503,
+        "elapsed_s": 1.39,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_13",
+        "status": 503,
+        "elapsed_s": 1.3,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_14",
+        "status": 503,
+        "elapsed_s": 1.36,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_15",
+        "status": 503,
+        "elapsed_s": 1.3,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_16",
+        "status": 503,
+        "elapsed_s": 1.19,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_17",
+        "status": 503,
+        "elapsed_s": 1.11,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_18",
+        "status": 503,
+        "elapsed_s": 1.56,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_19",
+        "status": 503,
+        "elapsed_s": 1.23,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      },
+      {
+        "label": "load_20",
+        "status": 503,
+        "elapsed_s": 1.23,
+        "body_len": 0,
+        "detections": 0,
+        "message": "",
+        "x_render_routing": "hibernate-wake-error"
+      }
+    ],
+    "summary": {
+      "total": 20,
+      "success": 0,
+      "failed": 20,
+      "success_rate": "0.0%",
+      "avg_s": 0,
+      "max_s": 0,
+      "min_s": 0,
+      "p50_s": 0,
+      "p95_s": 0,
+      "total_detections": 0
+    }
+  },
+  "error_handling": [
+    {
+      "label": "invalid_type",
+      "status": 503,
+      "body": ""
+    },
+    {
+      "label": "no_file",
+      "status": 503,
+      "body": ""
+    },
+    {
+      "label": "oversized",
+      "status": 503,
+      "body": ""
+    }
+  ],
+  "combined": {
+    "total": 35,
+    "success": 10,
+    "failed": 25,
+    "success_rate": "28.6%",
+    "avg_s": 44.85,
+    "max_s": 56.98,
+    "min_s": 34.72,
+    "p50_s": 44.22,
+    "p95_s": 56.98,
+    "total_detections": 3
+  }
+}

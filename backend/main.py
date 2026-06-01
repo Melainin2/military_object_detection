@@ -281,6 +281,9 @@ async def predict(file: UploadFile = File(...), request: Request = None):
 
         # --- Cleanup ---
         del img, results
+        loaded_model.predictor = None
+        gc.collect()
+        gc.collect()
         gc.collect()
 
         if not military_found:
