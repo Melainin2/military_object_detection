@@ -9,6 +9,6 @@ services:
       - key: HF_TOKEN
         sync: false
       - key: ALLOWED_ORIGINS
-        value: https://ai-detection-dashboard.vercel.app
+        value: https://militaryobjectdetection-main.vercel.app
       - key: PORT
         value: 8000
