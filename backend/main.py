@@ -196,6 +196,10 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         upload_elapsed = time.time() - t_upload
         logger.info("timing: upload_read=%.2fs size=%d", upload_elapsed, size)
 
+        # --- Request trace ---
+        logger.info("TRACE: request_received client=%s file=%s size=%d", client_ip, filename, size)
+        logger.info("TRACE: config imgsz=%d conf=%.2f iou=%.2f max_inference_size=%d", YOLO_IMGSZ, 0.25, 0.5, MAX_INFERENCE_SIZE)
+
         # --- Image decode + resize ---
         t_img = time.time()
         img = cv2.imread(file_path)
@@ -216,12 +220,14 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         t_model = time.time()
         loaded_model = load_model_sync()
         logger.info("timing: model_ensure=%.2fs (loaded=%s)", time.time() - t_model, model_loaded)
+        logger.info("TRACE: model_path=%s", loaded_model.ckpt_path if hasattr(loaded_model, 'ckpt_path') else 'unknown')
 
         # --- GC before inference ---
         gc.collect()
 
         # --- Inference (imgsz=320 for speed on 0.1 CPU) ---
         t_infer = time.time()
+        logger.info("TRACE: inference_start img_shape=(%d,%d,%d)", img.shape[0], img.shape[1], img.shape[2])
         try:
             with torch.no_grad():
                 results = loaded_model(
@@ -238,6 +244,7 @@ async def predict(file: UploadFile = File(...), request: Request = None):
 
         inference_elapsed = time.time() - t_infer
         logger.info("timing: inference=%.2fs", inference_elapsed)
+        logger.info("TRACE: inference_end duration=%.3f", inference_elapsed)
 
         # --- Post-process ---
         t_render = time.time()
@@ -288,6 +295,7 @@ async def predict(file: UploadFile = File(...), request: Request = None):
 
         if not military_found:
             logger.info("RESULT: No military objects in %s", unique_name)
+            logger.info("TRACE: response_sent status=200 detections=0 elapsed=%.2fs", total_elapsed)
             return JSONResponse({
                 "message": "No military object detected",
                 "detections": [],
@@ -295,6 +303,7 @@ async def predict(file: UploadFile = File(...), request: Request = None):
             })
 
         logger.info("RESULT: %d military objects in %s", len(detections), unique_name)
+        logger.info("TRACE: response_sent status=200 detections=%d elapsed=%.2fs", len(detections), total_elapsed)
         return JSONResponse({
             "message": "Military objects detected",
             "detections": detections,

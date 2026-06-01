@@ -178,8 +178,19 @@ async function uploadImage() {
     const preview = document.getElementById("preview");
     preview.src = URL.createObjectURL(file);
 
-    const startTime = Date.now();
+    // Clear ALL previous detection state immediately
     resultBox.innerHTML = "⏳ Processing...";
+    const canvas = document.getElementById("canvas");
+    if (canvas) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    if (chart) {
+        chart.destroy();
+        chart = null;
+    }
+
+    const startTime = Date.now();
 
     const timerId = setInterval(() => {
         const sec = Math.floor((Date.now() - startTime) / 1000);
