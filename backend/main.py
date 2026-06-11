@@ -5,6 +5,7 @@ import gc
 import time
 import threading
 
+import numpy
 import torch
 
 from fastapi import FastAPI, UploadFile, File, Request
@@ -16,15 +17,9 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
 import cv2
 
-# ===============================
-# PyTorch: single thread for 0.1 CPU
-# ===============================
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
 
-# ===============================
-# Logging
-# ===============================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -32,67 +27,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger("backend")
 
-# ===============================
-# App
-# ===============================
-app = FastAPI(title="AI Detection Dashboard", version="2.0.0")
+app = FastAPI(title="AI Detection Dashboard", version="3.0.0")
 
-# ===============================
-# CORS
-# ===============================
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000"
-).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ===============================
-# Constants
-# ===============================
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
-MAX_INFERENCE_SIZE = 320
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024
-YOLO_IMGSZ = 320
+YOLO_IMGSZ = 640
+YOLO_CONF  = 0.25   # lowered from 0.40 — captures multi-object scenes
+YOLO_IOU   = 0.40   # slightly relaxed NMS to keep boxes in crowded scenes
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ===============================
-# Global state
-# ===============================
+HF_REPO_ID = "datasidahmed/YOLOV8"
+HF_FILENAME = "best.pt"
+MODEL_CACHE_PATH = "best.pt"
+
 model = None
 model_loaded = False
 model_lock = threading.Lock()
 
-# ===============================
-# Class definitions
-# ===============================
-military_classes = [
-    "camouflage_soldier", "weapon", "military_tank",
-    "military_truck", "military_vehicle", "soldier",
-    "artillery", "military_aircraft", "warship",
-]
-
 class_names = [
-    "camouflage_soldier", "weapon", "military_tank",
-    "military_truck", "military_vehicle", "civilian",
-    "soldier", "civilian_vehicle", "artillery",
-    "military_aircraft", "warship",
+    "camouflage_soldier",   # 0
+    "weapon",               # 1
+    "military_tank",        # 2
+    "military_truck",       # 3
+    "military_vehicle",     # 4
+    "civilian",             # 5
+    "soldier",              # 6
+    "civilian_vehicle",     # 7
+    "military_artillery",   # 8
+    "trench",               # 9
+    "military_aircraft",    # 10
+    "military_warship",     # 11
 ]
 
+military_classes = {
+    "camouflage_soldier", "weapon", "military_tank", "military_truck",
+    "military_vehicle", "soldier", "military_artillery", "trench",
+    "military_aircraft", "military_warship",
+}
 
-# ===============================
-# Model loading (thread-safe, once)
-# ===============================
-def load_model_sync():
+
+def load_model_from_hf() -> YOLO:
+    """Download weights from HuggingFace once, cache locally, keep in memory."""
     global model, model_loaded
 
     if model is not None:
@@ -102,56 +87,68 @@ def load_model_sync():
         if model is not None:
             return model
 
-        logger.info("[MODEL] Downloading model from Hugging Face Hub...")
-        t0 = time.time()
-        model_path = hf_hub_download(
-            repo_id="datasidahmed/military_object_detection",
-            filename="best.pt",
-            token=os.getenv("HF_TOKEN"),
-        )
-        logger.info("[MODEL] Downloaded in %.2fs: %s", time.time() - t0, model_path)
+        if os.path.exists(MODEL_CACHE_PATH):
+            logger.info("[MODEL] Using cached weights: %s", MODEL_CACHE_PATH)
+            model_path = MODEL_CACHE_PATH
+        else:
+            logger.info("[MODEL] Downloading from HuggingFace: %s / %s", HF_REPO_ID, HF_FILENAME)
+            t0 = time.time()
+            try:
+                model_path = hf_hub_download(
+                    repo_id=HF_REPO_ID,
+                    filename=HF_FILENAME,
+                    local_dir=".",
+                    local_dir_use_symlinks=False,
+                )
+                logger.info("[MODEL] Downloaded in %.2fs", time.time() - t0)
+            except Exception as exc:
+                logger.error("[MODEL] HuggingFace download failed: %s", exc)
+                raise RuntimeError(
+                    f"Could not download model from HuggingFace ({HF_REPO_ID}): {exc}"
+                ) from exc
 
-        logger.info("[MODEL] Loading model into memory...")
+        logger.info("[MODEL] Loading into memory...")
         t1 = time.time()
         model = YOLO(model_path)
         model_loaded = True
-        logger.info("[MODEL] Loaded in %.2fs — ready for inference", time.time() - t1)
+        logger.info("[MODEL] Ready in %.2fs", time.time() - t1)
         return model
 
 
-# ===============================
-# Startup / Shutdown
-# ===============================
+def _warmup():
+    dummy = numpy.zeros((YOLO_IMGSZ, YOLO_IMGSZ, 3), dtype=numpy.uint8)
+    with torch.no_grad():
+        model.predict(dummy, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, iou=YOLO_IOU, device="cpu", verbose=False)
+    logger.info("[MODEL] Warmup complete — ready for inference")
+
+
+def _startup_task():
+    try:
+        load_model_from_hf()
+        _warmup()
+    except Exception:
+        logger.exception("[MODEL] Startup load failed — first request will retry")
+
+
 @app.on_event("startup")
 def on_startup():
-    logger.info("=== AI Detection Dashboard starting up ===")
-    logger.info("Upload and output directories ready")
-
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        logger.warning("HF_TOKEN is not set — model download may fail for gated models")
-    else:
-        logger.info("HF_TOKEN is configured")
-
-    logger.info("[MODEL] Starting background model pre-load...")
-    thread = threading.Thread(target=load_model_sync, daemon=True)
-    thread.start()
-
-    logger.info("=== Startup complete — model pre-load in background ===")
+    logger.info("=== AI Detection Dashboard v3 starting up ===")
+    threading.Thread(target=_startup_task, daemon=True).start()
 
 
 @app.on_event("shutdown")
 def on_shutdown():
-    logger.info("Shutting down AI Detection Dashboard")
     cv2.destroyAllWindows()
+    logger.info("Shutdown complete")
 
 
-# ===============================
-# Routes
-# ===============================
 @app.get("/health")
 def health():
-    return {"status": "healthy", "model_loaded": model_loaded}
+    return {
+        "status": "healthy",
+        "model_loaded": model_loaded,
+        "model_source": f"huggingface.co/{HF_REPO_ID}",
+    }
 
 
 @app.get("/")
@@ -165,162 +162,128 @@ async def predict(file: UploadFile = File(...), request: Request = None):
     upload_path = None
 
     try:
-        client_ip = request.client.host if request and request.client else "unknown"
         filename = os.path.basename(file.filename or "")
-        logger.info("=== PREDICT from %s — file: %s ===", client_ip, filename)
+        ext = os.path.splitext(filename.lower())[1]
 
-        # --- Validation ---
-        if os.path.splitext(filename.lower())[1] not in ALLOWED_EXTENSIONS:
-            logger.warning("REJECTED extension: %s", filename)
-            return JSONResponse({"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."}, status_code=400)
+        if ext not in ALLOWED_EXTENSIONS:
+            return JSONResponse(
+                {"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."},
+                status_code=400,
+            )
+        if file.content_type and file.content_type not in ALLOWED_MIME_TYPES:
+            return JSONResponse(
+                {"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."},
+                status_code=400,
+            )
 
-        if file.content_type not in ALLOWED_MIME_TYPES:
-            logger.warning("REJECTED MIME: %s = %s", filename, file.content_type)
-            return JSONResponse({"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."}, status_code=400)
+        # Load model (cached after first call)
+        try:
+            yolo = load_model_from_hf()
+        except RuntimeError as exc:
+            logger.error("[PREDICT] Model unavailable: %s", exc)
+            return JSONResponse({"error": str(exc)}, status_code=503)
 
-        ext = filename.rsplit(".", 1)[-1].lower()
-        unique_name = f"{uuid.uuid4()}.{ext}"
-        file_path = os.path.join(UPLOAD_DIR, unique_name)
-        upload_path = file_path
-
-        # --- Upload ---
-        t_upload = time.time()
-        size = 0
-        with open(file_path, "wb") as buffer:
+        # Save upload
+        unique_name = f"{uuid.uuid4()}{ext}"
+        upload_path = os.path.join(UPLOAD_DIR, unique_name)
+        with open(upload_path, "wb") as buf:
             while chunk := await file.read(8192):
-                size += len(chunk)
-                if size > MAX_UPLOAD_SIZE:
-                    logger.warning("REJECTED too large: %d bytes from %s", size, client_ip)
-                    return JSONResponse({"error": "File too large (max 10 MB)"}, status_code=413)
-                buffer.write(chunk)
-        upload_elapsed = time.time() - t_upload
-        logger.info("timing: upload_read=%.2fs size=%d", upload_elapsed, size)
+                buf.write(chunk)
 
-        # --- Request trace ---
-        logger.info("TRACE: request_received client=%s file=%s size=%d", client_ip, filename, size)
-        logger.info("TRACE: config imgsz=%d conf=%.2f iou=%.2f max_inference_size=%d", YOLO_IMGSZ, 0.25, 0.5, MAX_INFERENCE_SIZE)
-
-        # --- Image decode + resize ---
-        t_img = time.time()
-        img = cv2.imread(file_path)
+        # Decode image
+        img = cv2.imread(upload_path)
         if img is None:
-            logger.error("cv2.imread failed for %s (size=%d)", file_path, size)
-            return JSONResponse({"error": "Invalid image file"}, status_code=400)
+            return JSONResponse({"error": "Invalid or unreadable image file."}, status_code=400)
 
-        h, w = img.shape[:2]
-        orig_size = f"{w}x{h}"
-        if max(h, w) > MAX_INFERENCE_SIZE:
-            scale = MAX_INFERENCE_SIZE / max(h, w)
-            new_w, new_h = int(w * scale), int(h * scale)
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-            logger.info("timing: resized %s -> %dx%d", orig_size, new_w, new_h)
-        logger.info("timing: preprocess=%.2fs img=%s", time.time() - t_img, str(img.shape))
+        orig_h, orig_w = img.shape[:2]
 
-        # --- Ensure model loaded ---
-        t_model = time.time()
-        loaded_model = load_model_sync()
-        logger.info("timing: model_ensure=%.2fs (loaded=%s)", time.time() - t_model, model_loaded)
-        logger.info("TRACE: model_path=%s", loaded_model.ckpt_path if hasattr(loaded_model, 'ckpt_path') else 'unknown')
+        # Resize for inference if needed
+        if max(orig_h, orig_w) > YOLO_IMGSZ:
+            scale = YOLO_IMGSZ / max(orig_h, orig_w)
+            img = cv2.resize(
+                img,
+                (int(orig_w * scale), int(orig_h * scale)),
+                interpolation=cv2.INTER_LINEAR,
+            )
 
-        # --- GC before inference ---
+        resized_h, resized_w = img.shape[:2]
+        scale_x = orig_w / resized_w
+        scale_y = orig_h / resized_h
+
+        # YOLO inference
         gc.collect()
-
-        # --- Inference (imgsz=320 for speed on 0.1 CPU) ---
         t_infer = time.time()
-        logger.info("TRACE: inference_start img_shape=(%d,%d,%d)", img.shape[0], img.shape[1], img.shape[2])
         try:
             with torch.no_grad():
-                results = loaded_model(
+                results = yolo(
                     img,
                     imgsz=YOLO_IMGSZ,
-                    conf=0.25,
-                    iou=0.5,
+                    conf=YOLO_CONF,
+                    iou=YOLO_IOU,
                     device="cpu",
                     verbose=False,
                 )
-        except Exception as infer_err:
-            logger.exception("Inference crashed after %.2fs", time.time() - t_infer)
-            return JSONResponse({"error": "Model inference failed"}, status_code=500)
+        except Exception:
+            logger.exception("[INFER] Inference crashed")
+            return JSONResponse({"error": "Model inference failed."}, status_code=500)
+        inf_time = time.time() - t_infer
 
-        inference_elapsed = time.time() - t_infer
-        logger.info("timing: inference=%.2fs", inference_elapsed)
-        logger.info("TRACE: inference_end duration=%.3f", inference_elapsed)
-
-        # --- Post-process ---
-        t_render = time.time()
+        # Parse results — keep only military classes
         detections = []
-        military_found = False
-
         for r in results:
             if r.boxes is None:
                 continue
             for box in r.boxes:
                 conf = float(box.conf[0])
                 cls_id = int(box.cls[0])
-                class_name = class_names[cls_id] if cls_id < len(class_names) else "unknown"
+                name = class_names[cls_id] if cls_id < len(class_names) else "unknown"
+                if name not in military_classes:
+                    continue
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+                ox1 = int(x1 * scale_x)
+                oy1 = int(y1 * scale_y)
+                ox2 = int(x2 * scale_x)
+                oy2 = int(y2 * scale_y)
+                detections.append({
+                    "class_name": name,
+                    "confidence": round(conf, 4),
+                    "box": [ox1, oy1, ox2, oy2],
+                })
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(
+                    img,
+                    f"{name} {conf:.2f}",
+                    (x1, max(y1 - 5, 0)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    2,
+                )
 
-                if class_name in military_classes:
-                    military_found = True
-                    detections.append({
-                        "class_name": class_name,
-                        "confidence": round(conf, 4),
-                        "box": [x1, y1, x2, y2],
-                    })
-                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(
-                        img, f"{class_name} {conf:.2f}",
-                        (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2,
-                    )
-                    logger.info("DETECTED: %s conf=%.4f", class_name, conf)
-
-        # --- Save output ---
         output_path = os.path.join(OUTPUT_DIR, unique_name)
         cv2.imwrite(output_path, img)
-        render_elapsed = time.time() - t_render
-        logger.info("timing: render=%.2fs detections=%d", render_elapsed, len(detections))
 
-        total_elapsed = time.time() - req_start
+        total_time = time.time() - req_start
         logger.info(
-            "timing: total=%.2fs inference=%.2fs detections=%d img=%s client=%s",
-            total_elapsed, inference_elapsed, len(detections), orig_size, client_ip,
+            "[PREDICT] infer=%.3fs total=%.3fs det=%d img=%dx%d",
+            inf_time, total_time, len(detections), orig_w, orig_h,
         )
 
-        # --- Cleanup ---
         del img, results
-        loaded_model.predictor = None
-        gc.collect()
-        gc.collect()
         gc.collect()
 
-        if not military_found:
-            logger.info("RESULT: No military objects in %s", unique_name)
-            logger.info("TRACE: response_sent status=200 detections=0 elapsed=%.2fs", total_elapsed)
-            return JSONResponse({
-                "message": "No military object detected",
-                "detections": [],
-                "image_url": f"/outputs/{unique_name}",
-            })
-
-        logger.info("RESULT: %d military objects in %s", len(detections), unique_name)
-        logger.info("TRACE: response_sent status=200 detections=%d elapsed=%.2fs", len(detections), total_elapsed)
         return JSONResponse({
-            "message": "Military objects detected",
+            "message": "Soldier Detected" if detections else "No Soldier Detected",
             "detections": detections,
             "image_url": f"/outputs/{unique_name}",
         })
 
-    except Exception as e:
-        elapsed = time.time() - req_start
-        logger.exception("FAILED after %.2fs — %s: %s", elapsed, type(e).__name__, str(e))
-        return JSONResponse({"error": "Internal server error"}, status_code=500)
+    except Exception:
+        logger.exception("[PREDICT] Unexpected error after %.2fs", time.time() - req_start)
+        return JSONResponse({"error": "Internal server error."}, status_code=500)
     finally:
         if upload_path and os.path.exists(upload_path):
             os.remove(upload_path)
-            logger.info("CLEANUP: removed %s", upload_path)
 
 
-# ===============================
-# Static files
-# ===============================
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")

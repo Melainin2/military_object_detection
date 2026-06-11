@@ -15,7 +15,7 @@
 // For production (Vercel), set to your Render backend URL:
 //   const BACKEND_URL = "https://your-app.onrender.com";
 // ============================================================
-const BACKEND_URL = "https://military-object-detection.onrender.com";
+const BACKEND_URL = "";
 </script>
 
 <style>
@@ -144,7 +144,7 @@ img, canvas {
     <!-- DETECTION -->
     <div class="card">
         <h2>Detection</h2>
-        <canvas id="canvas"></canvas>
+        <img id="detection" style="display:none">
     </div>
 
 </div>
@@ -180,10 +180,10 @@ async function uploadImage() {
 
     // Clear ALL previous detection state immediately
     resultBox.innerHTML = "⏳ Processing...";
-    const canvas = document.getElementById("canvas");
-    if (canvas) {
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const detectionImg = document.getElementById("detection");
+    if (detectionImg) {
+        detectionImg.style.display = "none";
+        detectionImg.src = "";
     }
     if (chart) {
         chart.destroy();
@@ -225,8 +225,10 @@ async function uploadImage() {
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
 
         displayResults(data, elapsed);
-        drawBoxes(data);
-        drawChart(data);
+        displayDetection(data);
+        if (data.detections && data.detections.length > 0) {
+            drawChart(data);
+        }
 
     } catch (error) {
         clearTimeout(timeoutId);
@@ -247,11 +249,11 @@ function displayResults(data, elapsed) {
     let html = `<small style="opacity:0.6">⏱ ${elapsed}s</small><br>`;
 
     if (!data.detections || data.detections.length === 0) {
-        resultBox.innerHTML = html + "❌ No military objects detected";
+        resultBox.innerHTML = html + "❌ No Soldier Detected";
         return;
     }
 
-    html += "✅ Military objects detected:<br><br>";
+    html += "✅ Soldier Detected:<br><br>";
     data.detections.forEach(det => {
         html += `<p>🎯 <b>${det.class_name}</b> (${(det.confidence * 100).toFixed(1)}%)</p>`;
     });
@@ -260,62 +262,23 @@ function displayResults(data, elapsed) {
 </script>
 
 <script>
-function drawBoxes(data) {
-
-    const img = document.getElementById("preview");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-
-    if (img.complete) {
-        render();
+function displayDetection(data) {
+    const detectionImg = document.getElementById("detection");
+    if (data.image_url) {
+        detectionImg.onload = function() { this.style.display = "block"; };
+        detectionImg.src = BACKEND_URL + data.image_url;
     } else {
-        img.onload = render;
-    }
-
-    function render() {
-
-        canvas.width = img.clientWidth;
-        canvas.height = img.clientHeight;
-
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        const scaleX = canvas.width / img.naturalWidth;
-        const scaleY = canvas.height / img.naturalHeight;
-
-        data.detections.forEach(det => {
-
-            if (!det.box) return;
-
-            let [x1, y1, x2, y2] = det.box;
-
-            x1 *= scaleX;
-            x2 *= scaleX;
-            y1 *= scaleY;
-            y2 *= scaleY;
-
-            ctx.strokeStyle = "red";
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-
-            ctx.fillStyle = "red";
-            ctx.font = "14px Arial";
-
-            ctx.fillText(
-                `${det.class_name}`,
-                x1,
-                y1 > 10 ? y1 - 5 : y1 + 15
-            );
-        });
+        detectionImg.style.display = "none";
     }
 }
 </script>
 
 <script>
 function drawChart(data) {
+    const canvas = document.getElementById("chart");
+    if (!canvas) return;
 
     const counts = {};
-
     data.detections.forEach(det => {
         counts[det.class_name] = (counts[det.class_name] || 0) + 1;
     });
@@ -323,7 +286,8 @@ function drawChart(data) {
     const labels = Object.keys(counts);
     const values = Object.values(counts);
 
-    const ctx = document.getElementById("chart").getContext("2d");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     if (chart) chart.destroy();
 
