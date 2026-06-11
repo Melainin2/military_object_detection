@@ -36,11 +36,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "outputs"
-YOLO_IMGSZ = 640
-YOLO_CONF  = 0.25   # lowered from 0.40 — captures multi-object scenes
-YOLO_IOU   = 0.40   # slightly relaxed NMS to keep boxes in crowded scenes
+UPLOAD_DIR     = "uploads"
+OUTPUT_DIR     = "outputs"
+YOLO_IMGSZ     = 320   # 320 keeps RAM under 512 MB on Render free tier
+MAX_IMG_DIM    = 320   # resize before inference to same budget
+YOLO_CONF      = 0.25
+YOLO_IOU       = 0.40
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -198,8 +199,8 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         orig_h, orig_w = img.shape[:2]
 
         # Resize for inference if needed
-        if max(orig_h, orig_w) > YOLO_IMGSZ:
-            scale = YOLO_IMGSZ / max(orig_h, orig_w)
+        if max(orig_h, orig_w) > MAX_IMG_DIM:
+            scale = MAX_IMG_DIM / max(orig_h, orig_w)
             img = cv2.resize(
                 img,
                 (int(orig_w * scale), int(orig_h * scale)),
