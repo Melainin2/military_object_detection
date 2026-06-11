@@ -34,8 +34,9 @@ app.add_middleware(
 UPLOAD_DIR  = "uploads"
 OUTPUT_DIR  = "outputs"
 YOLO_IMGSZ  = 320
-YOLO_CONF   = 0.25
-YOLO_IOU    = 0.40
+YOLO_CONF   = 0.20
+YOLO_IOU    = 0.45
+MAX_INPUT_DIM = 1280   # cap large uploads before letterbox
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -90,6 +91,11 @@ def _letterbox(img, size=320, color=(114, 114, 114)):
 
 
 def _preprocess(img_bgr):
+    h, w = img_bgr.shape[:2]
+    if max(h, w) > MAX_INPUT_DIM:
+        scale = MAX_INPUT_DIM / max(h, w)
+        img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)),
+                             interpolation=cv2.INTER_AREA)
     lb, ratio, pad_w, pad_h = _letterbox(img_bgr, YOLO_IMGSZ)
     rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     tensor = rgb.transpose(2, 0, 1)[np.newaxis]   # NCHW
@@ -182,6 +188,9 @@ def load_session() -> ort.InferenceSession:
         sess_options = ort.SessionOptions()
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.enable_mem_pattern = True
         session = ort.InferenceSession(
             model_path,
             sess_options=sess_options,
