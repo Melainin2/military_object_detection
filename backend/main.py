@@ -5,20 +5,15 @@ import gc
 import time
 import threading
 
-import numpy
-import torch
+import numpy as np
+import cv2
+import onnxruntime as ort
 
 from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-
-from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
-import cv2
-
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("backend")
 
-app = FastAPI(title="AI Detection Dashboard", version="3.0.0")
+app = FastAPI(title="AI Detection Dashboard", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,26 +31,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR     = "uploads"
-OUTPUT_DIR     = "outputs"
-YOLO_IMGSZ     = 320   # 320 keeps RAM under 512 MB on Render free tier
-MAX_IMG_DIM    = 320   # resize before inference to same budget
-YOLO_CONF      = 0.25
-YOLO_IOU       = 0.40
+UPLOAD_DIR  = "uploads"
+OUTPUT_DIR  = "outputs"
+YOLO_IMGSZ  = 320
+YOLO_CONF   = 0.25
+YOLO_IOU    = 0.40
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-HF_REPO_ID = "datasidahmed/YOLOV8"
-HF_FILENAME = "best.pt"
-MODEL_CACHE_PATH = "best.pt"
+HF_REPO_ID    = "datasidahmed/YOLOV8"
+HF_FILENAME   = "best.onnx"
+MODEL_CACHE   = "best.onnx"
 
-model = None
+session     = None
 model_loaded = False
-model_lock = threading.Lock()
+model_lock  = threading.Lock()
 
-class_names = [
+CLASS_NAMES = [
     "camouflage_soldier",   # 0
     "weapon",               # 1
     "military_tank",        # 2
@@ -70,29 +64,105 @@ class_names = [
     "military_warship",     # 11
 ]
 
-military_classes = {
+MILITARY_CLASSES = {
     "camouflage_soldier", "weapon", "military_tank", "military_truck",
     "military_vehicle", "soldier", "military_artillery", "trench",
     "military_aircraft", "military_warship",
 }
 
 
-def load_model_from_hf() -> YOLO:
-    """Download weights from HuggingFace once, cache locally, keep in memory."""
-    global model, model_loaded
+# ── ONNX preprocessing ───────────────────────────────────────────────────────
 
-    if model is not None:
-        return model
+def _letterbox(img, size=320, color=(114, 114, 114)):
+    h, w = img.shape[:2]
+    r = size / max(h, w)
+    nh, nw = int(round(h * r)), int(round(w * r))
+    img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    pad_h = (size - nh) / 2
+    pad_w = (size - nw) / 2
+    top  = int(round(pad_h - 0.1))
+    bot  = int(round(pad_h + 0.1))
+    left = int(round(pad_w - 0.1))
+    right= int(round(pad_w + 0.1))
+    img = cv2.copyMakeBorder(img, top, bot, left, right,
+                             cv2.BORDER_CONSTANT, value=color)
+    return img, r, left, top
+
+
+def _preprocess(img_bgr):
+    lb, ratio, pad_w, pad_h = _letterbox(img_bgr, YOLO_IMGSZ)
+    rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    tensor = rgb.transpose(2, 0, 1)[np.newaxis]   # NCHW
+    return tensor, ratio, pad_w, pad_h
+
+
+def _postprocess(raw, ratio, pad_w, pad_h):
+    """
+    raw: [1, 16, 2100] — cx cy w h + 12 class scores (pixel coords in letterbox)
+    Returns list of {class_id, confidence, box [x1,y1,x2,y2] in original coords}
+    """
+    pred = raw[0].T                 # [2100, 16]
+    cx, cy, w, h = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
+    scores = pred[:, 4:]            # [2100, 12]
+
+    class_ids   = np.argmax(scores, axis=1)
+    confidences = scores[np.arange(len(scores)), class_ids]
+
+    mask = confidences >= YOLO_CONF
+    if not mask.any():
+        return []
+
+    cx, cy, w, h = cx[mask], cy[mask], w[mask], h[mask]
+    confidences  = confidences[mask]
+    class_ids    = class_ids[mask]
+
+    # xywh → xyxy in letterbox coords
+    x1 = cx - w / 2
+    y1 = cy - h / 2
+    x2 = cx + w / 2
+    y2 = cy + h / 2
+
+    # Undo letterbox padding and scale → original image coords
+    x1 = (x1 - pad_w) / ratio
+    y1 = (y1 - pad_h) / ratio
+    x2 = (x2 - pad_w) / ratio
+    y2 = (y2 - pad_h) / ratio
+
+    boxes_xyxy = np.stack([x1, y1, x2, y2], axis=1)
+
+    # OpenCV NMS (expects xywh)
+    boxes_xywh = [[float(x1[i]), float(y1[i]), float(x2[i]-x1[i]), float(y2[i]-y1[i])]
+                  for i in range(len(x1))]
+    idxs = cv2.dnn.NMSBoxes(boxes_xywh, confidences.tolist(), YOLO_CONF, YOLO_IOU)
+
+    results = []
+    for i in (idxs.flatten() if len(idxs) else []):
+        results.append({
+            "class_id":   int(class_ids[i]),
+            "confidence": float(confidences[i]),
+            "box": [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
+        })
+    return results
+
+
+# ── Model loading ─────────────────────────────────────────────────────────────
+
+def load_session() -> ort.InferenceSession:
+    global session, model_loaded
+
+    if session is not None:
+        return session
 
     with model_lock:
-        if model is not None:
-            return model
+        if session is not None:
+            return session
 
-        if os.path.exists(MODEL_CACHE_PATH):
-            logger.info("[MODEL] Using cached weights: %s", MODEL_CACHE_PATH)
-            model_path = MODEL_CACHE_PATH
+        if os.path.exists(MODEL_CACHE):
+            logger.info("[MODEL] Using cached ONNX: %s", MODEL_CACHE)
+            model_path = MODEL_CACHE
         else:
-            logger.info("[MODEL] Downloading from HuggingFace: %s / %s", HF_REPO_ID, HF_FILENAME)
+            logger.info("[MODEL] Downloading ONNX from HuggingFace: %s/%s",
+                        HF_REPO_ID, HF_FILENAME)
             t0 = time.time()
             try:
                 model_path = hf_hub_download(
@@ -103,44 +173,49 @@ def load_model_from_hf() -> YOLO:
                 )
                 logger.info("[MODEL] Downloaded in %.2fs", time.time() - t0)
             except Exception as exc:
-                logger.error("[MODEL] HuggingFace download failed: %s", exc)
                 raise RuntimeError(
-                    f"Could not download model from HuggingFace ({HF_REPO_ID}): {exc}"
+                    f"HuggingFace download failed ({HF_REPO_ID}): {exc}"
                 ) from exc
 
-        logger.info("[MODEL] Loading into memory...")
+        logger.info("[MODEL] Loading ONNX session...")
         t1 = time.time()
-        model = YOLO(model_path)
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        session = ort.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=["CPUExecutionProvider"],
+        )
         model_loaded = True
-        logger.info("[MODEL] Ready in %.2fs", time.time() - t1)
-        return model
+        logger.info("[MODEL] ONNX session ready in %.2fs", time.time() - t1)
+        return session
 
 
 def _warmup():
-    dummy = numpy.zeros((YOLO_IMGSZ, YOLO_IMGSZ, 3), dtype=numpy.uint8)
-    with torch.no_grad():
-        model.predict(dummy, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, iou=YOLO_IOU, device="cpu", verbose=False)
-    logger.info("[MODEL] Warmup complete — ready for inference")
+    dummy = np.zeros((1, 3, YOLO_IMGSZ, YOLO_IMGSZ), dtype=np.float32)
+    sess = load_session()
+    inp_name = sess.get_inputs()[0].name
+    sess.run(None, {inp_name: dummy})
+    logger.info("[MODEL] Warmup complete")
 
 
-def _startup_task():
+def _startup():
     try:
-        load_model_from_hf()
         _warmup()
     except Exception:
-        logger.exception("[MODEL] Startup load failed — first request will retry")
+        logger.exception("[MODEL] Startup failed — first request will retry")
 
 
 @app.on_event("startup")
 def on_startup():
-    logger.info("=== AI Detection Dashboard v3 starting up ===")
-    threading.Thread(target=_startup_task, daemon=True).start()
+    logger.info("=== AI Detection Dashboard v4 (ONNX) starting ===")
+    threading.Thread(target=_startup, daemon=True).start()
 
 
 @app.on_event("shutdown")
 def on_shutdown():
     cv2.destroyAllWindows()
-    logger.info("Shutdown complete")
 
 
 @app.get("/health")
@@ -149,6 +224,7 @@ def health():
         "status": "healthy",
         "model_loaded": model_loaded,
         "model_source": f"huggingface.co/{HF_REPO_ID}",
+        "runtime": "onnxruntime",
     }
 
 
@@ -168,21 +244,23 @@ async def predict(file: UploadFile = File(...), request: Request = None):
 
         if ext not in ALLOWED_EXTENSIONS:
             return JSONResponse(
-                {"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."},
+                {"error": "Seuls les fichiers image JPG, PNG, WEBP sont acceptés."},
                 status_code=400,
             )
         if file.content_type and file.content_type not in ALLOWED_MIME_TYPES:
             return JSONResponse(
-                {"error": "Only image files (JPG, JPEG, PNG, WEBP) are allowed."},
+                {"error": "Seuls les fichiers image JPG, PNG, WEBP sont acceptés."},
                 status_code=400,
             )
 
-        # Load model (cached after first call)
+        # Load ONNX session (cached)
         try:
-            yolo = load_model_from_hf()
+            sess = load_session()
         except RuntimeError as exc:
-            logger.error("[PREDICT] Model unavailable: %s", exc)
             return JSONResponse({"error": str(exc)}, status_code=503)
+
+        inp_name  = sess.get_inputs()[0].name
+        out_name  = sess.get_outputs()[0].name
 
         # Save upload
         unique_name = f"{uuid.uuid4()}{ext}"
@@ -191,86 +269,60 @@ async def predict(file: UploadFile = File(...), request: Request = None):
             while chunk := await file.read(8192):
                 buf.write(chunk)
 
-        # Decode image
-        img = cv2.imread(upload_path)
-        if img is None:
-            return JSONResponse({"error": "Invalid or unreadable image file."}, status_code=400)
+        # Decode
+        img_bgr = cv2.imread(upload_path)
+        if img_bgr is None:
+            return JSONResponse({"error": "Image invalide ou illisible."}, status_code=400)
 
-        orig_h, orig_w = img.shape[:2]
+        orig_h, orig_w = img_bgr.shape[:2]
 
-        # Resize for inference if needed
-        if max(orig_h, orig_w) > MAX_IMG_DIM:
-            scale = MAX_IMG_DIM / max(orig_h, orig_w)
-            img = cv2.resize(
-                img,
-                (int(orig_w * scale), int(orig_h * scale)),
-                interpolation=cv2.INTER_LINEAR,
-            )
+        # Preprocess → letterbox → NCHW float32
+        tensor, ratio, pad_w, pad_h = _preprocess(img_bgr)
 
-        resized_h, resized_w = img.shape[:2]
-        scale_x = orig_w / resized_w
-        scale_y = orig_h / resized_h
-
-        # YOLO inference
-        gc.collect()
+        # ONNX inference
         t_infer = time.time()
         try:
-            with torch.no_grad():
-                results = yolo(
-                    img,
-                    imgsz=YOLO_IMGSZ,
-                    conf=YOLO_CONF,
-                    iou=YOLO_IOU,
-                    device="cpu",
-                    verbose=False,
-                )
+            raw = sess.run([out_name], {inp_name: tensor})
         except Exception:
-            logger.exception("[INFER] Inference crashed")
-            return JSONResponse({"error": "Model inference failed."}, status_code=500)
-        inf_time = time.time() - t_infer
+            logger.exception("[INFER] ONNX inference error")
+            return JSONResponse({"error": "Inference failed."}, status_code=500)
+        inf_ms = (time.time() - t_infer) * 1000
 
-        # Parse results — keep only military classes
+        # Postprocess
+        boxes = _postprocess(raw[0], ratio, pad_w, pad_h)
+
+        # Filter military only + draw
         detections = []
-        for r in results:
-            if r.boxes is None:
+        img_draw = img_bgr.copy()
+        for b in boxes:
+            name = CLASS_NAMES[b["class_id"]] if b["class_id"] < len(CLASS_NAMES) else "unknown"
+            if name not in MILITARY_CLASSES:
                 continue
-            for box in r.boxes:
-                conf = float(box.conf[0])
-                cls_id = int(box.cls[0])
-                name = class_names[cls_id] if cls_id < len(class_names) else "unknown"
-                if name not in military_classes:
-                    continue
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                ox1 = int(x1 * scale_x)
-                oy1 = int(y1 * scale_y)
-                ox2 = int(x2 * scale_x)
-                oy2 = int(y2 * scale_y)
-                detections.append({
-                    "class_name": name,
-                    "confidence": round(conf, 4),
-                    "box": [ox1, oy1, ox2, oy2],
-                })
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(
-                    img,
-                    f"{name} {conf:.2f}",
-                    (x1, max(y1 - 5, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    2,
-                )
+            x1, y1, x2, y2 = b["box"]
+            # Clamp to image bounds
+            x1 = max(0, min(x1, orig_w - 1))
+            y1 = max(0, min(y1, orig_h - 1))
+            x2 = max(0, min(x2, orig_w - 1))
+            y2 = max(0, min(y2, orig_h - 1))
+            conf = b["confidence"]
+            detections.append({
+                "class_name": name,
+                "confidence": round(conf, 4),
+                "box": [x1, y1, x2, y2],
+            })
+            cv2.rectangle(img_draw, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(img_draw, f"{name} {conf:.2f}",
+                        (x1, max(y1 - 5, 0)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         output_path = os.path.join(OUTPUT_DIR, unique_name)
-        cv2.imwrite(output_path, img)
+        cv2.imwrite(output_path, img_draw)
 
-        total_time = time.time() - req_start
-        logger.info(
-            "[PREDICT] infer=%.3fs total=%.3fs det=%d img=%dx%d",
-            inf_time, total_time, len(detections), orig_w, orig_h,
-        )
+        total_ms = (time.time() - req_start) * 1000
+        logger.info("[PREDICT] infer=%.0fms total=%.0fms det=%d img=%dx%d",
+                    inf_ms, total_ms, len(detections), orig_w, orig_h)
 
-        del img, results
+        del img_bgr, img_draw, tensor, raw
         gc.collect()
 
         return JSONResponse({
@@ -280,7 +332,8 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         })
 
     except Exception:
-        logger.exception("[PREDICT] Unexpected error after %.2fs", time.time() - req_start)
+        logger.exception("[PREDICT] Unexpected error after %.0fms",
+                         (time.time() - req_start) * 1000)
         return JSONResponse({"error": "Internal server error."}, status_code=500)
     finally:
         if upload_path and os.path.exists(upload_path):
