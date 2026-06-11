@@ -19,9 +19,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
         ultralytics==8.4.41 \
         opencv-python-headless==4.13.0.92 \
         python-multipart==0.0.26 \
-        huggingface-hub==1.12.0 \
         torch==2.11.0 \
-        torchvision==0.26.0
+        torchvision==0.26.0 \
+        huggingface_hub>=0.23.0 \
+        Pillow>=10.0.0
 
 # Copy backend source
 COPY . /app
