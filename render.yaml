@@ -1,14 +1,11 @@
 services:
   - type: web
-    name: military-object-detection
+    name: ai-detection-dashboard
     env: python
     plan: starter
-    rootDir: .
     buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
-      - key: PORT
-        value: 8000
       - key: PYTHONUNBUFFERED
         value: "1"

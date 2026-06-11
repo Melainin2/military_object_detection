@@ -1,6 +1,6 @@
 fastapi==0.136.1
 uvicorn==0.46.0
-onnxruntime==1.19.2
+onnxruntime
 opencv-python-headless==4.13.0.92
 python-multipart==0.0.26
 huggingface_hub>=0.23.0
