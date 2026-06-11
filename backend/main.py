@@ -34,9 +34,10 @@ app.add_middleware(
 UPLOAD_DIR  = "uploads"
 OUTPUT_DIR  = "outputs"
 YOLO_IMGSZ  = 320
-YOLO_CONF   = 0.20
+YOLO_CONF   = 0.35
 YOLO_IOU    = 0.45
 MAX_INPUT_DIM = 1280   # cap large uploads before letterbox
+MAX_BOX_AREA_RATIO = 0.70  # ignore boxes covering >70% of image (portrait false-positives)
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -301,6 +302,7 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         boxes = _postprocess(raw[0], ratio, pad_w, pad_h)
 
         # Filter military only + draw
+        img_area = orig_w * orig_h
         detections = []
         img_draw = img_bgr.copy()
         for b in boxes:
@@ -313,6 +315,11 @@ async def predict(file: UploadFile = File(...), request: Request = None):
             y1 = max(0, min(y1, orig_h - 1))
             x2 = max(0, min(x2, orig_w - 1))
             y2 = max(0, min(y2, orig_h - 1))
+            # Reject full-frame false positives (portrait photos, close-ups)
+            box_area = (x2 - x1) * (y2 - y1)
+            if img_area > 0 and box_area / img_area > MAX_BOX_AREA_RATIO:
+                logger.info("[FILTER] Skipped large-box false-positive (%.0f%% of image)", 100 * box_area / img_area)
+                continue
             conf = b["confidence"]
             detections.append({
                 "class_name": name,
