@@ -15,6 +15,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from huggingface_hub import hf_hub_download
 
+try:
+    from classifier_service import ImageClassifier  # Render/Docker (backend/ root)
+except ModuleNotFoundError:
+    from backend.classifier_service import ImageClassifier  # local dev
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -47,9 +52,12 @@ HF_REPO_ID    = "datasidahmed/YOLOV8"
 HF_FILENAME   = "best.onnx"
 MODEL_CACHE   = "best.onnx"
 
-session     = None
-model_loaded = False
-model_lock  = threading.Lock()
+session          = None
+model_loaded     = False
+model_lock       = threading.Lock()
+classifier       = None
+vit_loaded       = False
+vit_lock         = threading.Lock()
 
 CLASS_NAMES = [
     "camouflage_soldier",   # 0
@@ -217,10 +225,27 @@ def _startup():
         logger.exception("[MODEL] Startup failed — first request will retry")
 
 
+def load_vit():
+    global classifier, vit_loaded
+    with vit_lock:
+        if classifier is not None:
+            return
+        try:
+            logger.info("[VIT] Initializing ImageClassifier (ResNet50)...")
+            t0 = time.time()
+            classifier = ImageClassifier()
+            vit_loaded = classifier.model_loaded
+            logger.info("[VIT] Ready in %.2fs (loaded=%s)", time.time() - t0, vit_loaded)
+        except Exception as exc:
+            logger.exception("[VIT] Initialization failed: %s", exc)
+            vit_loaded = False
+
+
 @app.on_event("startup")
 def on_startup():
     logger.info("=== AI Detection Dashboard v4 (ONNX) starting ===")
     threading.Thread(target=_startup, daemon=True).start()
+    threading.Thread(target=load_vit, daemon=True).start()
 
 
 @app.on_event("shutdown")
@@ -233,6 +258,7 @@ def health():
     return {
         "status": "healthy",
         "model_loaded": model_loaded,
+        "vit_loaded": vit_loaded,
         "model_source": f"huggingface.co/{HF_REPO_ID}",
         "runtime": "onnxruntime",
     }
@@ -286,10 +312,29 @@ async def predict(file: UploadFile = File(...), request: Request = None):
 
         orig_h, orig_w = img_bgr.shape[:2]
 
-        # Preprocess → letterbox → NCHW float32
+        # ── STEP 1: ViT classifier ────────────────────────────────────────────
+        vit_result = None
+        vit_approved = False
+        if classifier is not None and classifier.model_loaded:
+            try:
+                vit_result = classifier.predict(img_bgr)
+                vit_approved = vit_result.get("is_military", False)
+            except Exception:
+                logger.exception("[VIT] Prediction error — falling back to YOLO-only")
+
+        vit_score = round(vit_result["military_score"], 4) if vit_result else 0.0
+        vit_conf  = round(vit_result["confidence"], 4)    if vit_result else 0.0
+        vit_top   = vit_result["top_predictions"]          if vit_result else []
+
+        if vit_result is not None:
+            logger.info(
+                "[DECISION] is_military=%s vit_score=%.4f vit_conf=%.4f vit_approved=%s",
+                vit_result["is_military"], vit_score, vit_conf, vit_approved,
+            )
+
+        # ── STEP 2: YOLO inference ────────────────────────────────────────────
         tensor, ratio, pad_w, pad_h = _preprocess(img_bgr)
 
-        # ONNX inference
         t_infer = time.time()
         try:
             raw = sess.run([out_name], {inp_name: tensor})
@@ -298,7 +343,6 @@ async def predict(file: UploadFile = File(...), request: Request = None):
             return JSONResponse({"error": "Inference failed."}, status_code=500)
         inf_ms = (time.time() - t_infer) * 1000
 
-        # Postprocess
         boxes = _postprocess(raw[0], ratio, pad_w, pad_h)
 
         # Filter military only + draw
@@ -310,12 +354,10 @@ async def predict(file: UploadFile = File(...), request: Request = None):
             if name not in MILITARY_CLASSES:
                 continue
             x1, y1, x2, y2 = b["box"]
-            # Clamp to image bounds
             x1 = max(0, min(x1, orig_w - 1))
             y1 = max(0, min(y1, orig_h - 1))
             x2 = max(0, min(x2, orig_w - 1))
             y2 = max(0, min(y2, orig_h - 1))
-            # Reject full-frame false positives (portrait photos, close-ups)
             box_area = (x2 - x1) * (y2 - y1)
             if img_area > 0 and box_area / img_area > MAX_BOX_AREA_RATIO:
                 logger.info("[FILTER] Skipped large-box false-positive (%.0f%% of image)", 100 * box_area / img_area)
@@ -334,17 +376,33 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         output_path = os.path.join(OUTPUT_DIR, unique_name)
         cv2.imwrite(output_path, img_draw)
 
+        yolo_found = len(detections) > 0
+
+        # ── FINAL DECISION ────────────────────────────────────────────────────
+        # Rule A: ViT + YOLO (both agree) → Soldier Detected
+        # Rule B: YOLO only → Soldier Detected
+        # Rule C: ViT only → Soldier Detected (ViT trumps YOLO)
+        # Rule D: Neither → No Soldier Detected
+        military_found = vit_approved or yolo_found
+        message = "Soldier Detected" if military_found else "No Soldier Detected"
+
         total_ms = (time.time() - req_start) * 1000
-        logger.info("[PREDICT] infer=%.0fms total=%.0fms det=%d img=%dx%d",
-                    inf_ms, total_ms, len(detections), orig_w, orig_h)
+        logger.info(
+            "[FINAL_DECISION] vit_approved=%s yolo_found=%s military_found=%s message=%s infer=%.0fms total=%.0fms",
+            vit_approved, yolo_found, military_found, message, inf_ms, total_ms,
+        )
 
         del img_bgr, img_draw, tensor, raw
         gc.collect()
 
         return JSONResponse({
-            "message": "Soldier Detected" if detections else "No Soldier Detected",
+            "message": message,
             "detections": detections,
             "image_url": f"/outputs/{unique_name}",
+            "vit_loaded": classifier is not None and classifier.model_loaded,
+            "vit_military_score": vit_score,
+            "vit_confidence": vit_conf,
+            "vit_top_predictions": vit_top,
         })
 
     except Exception:

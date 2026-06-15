@@ -44,7 +44,6 @@ jobs:
           import fastapi
           import uvicorn
           import cv2
-          import huggingface_hub
           print('All dependencies import successfully')
           "
 

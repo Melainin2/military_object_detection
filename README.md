@@ -1,145 +1,76 @@
-# AI Detection Dashboard
+# Military Object Detection – AI Detection Dashboard
 
-A production-ready AI detection dashboard for military object detection using YOLO and FastAPI. This repository contains a lightweight frontend, API back end, and deployment tooling for private GitHub hosting.
+Dual-model (ViT + YOLO) pipeline for military object detection with FastAPI backend and lightweight web UI.
 
 ## Features
 
-- Upload images for object detection
-- Detect military-related objects using YOLO
-- Bounding box overlay on uploaded images
-- Detection summary dashboard with chart visualization
-- FastAPI backend with secure environment support
-- Docker-ready and Render-ready deployment configuration
+- **Dual-model pipeline**: ViT (ResNet50) for scene-level classification + YOLOv8 (ONNX) for object localization
+- **Smart cascade logic**: ViT acts as gatekeeper; "Soldier Detected" if either model confirms military content
+- **Web UI**: Drag-and-drop image upload, bounding box visualization, confidence scores
+- **FastAPI backend**: Async inference, ONNX runtime, automatic model caching
+- **Ready for deployment**: Docker, Render, Hugging Face Spaces
 
-## Technologies Used
+## Technologies
 
-- FastAPI
-- Uvicorn
-- Ultralytics YOLO
+- FastAPI + Uvicorn
+- PyTorch + TorchVision (ResNet50 / ImageNet)
+- ONNX Runtime (YOLOv8)
 - OpenCV
-- Hugging Face Hub
-- HTML / CSS / JavaScript
-- Chart.js
-- Docker
-- Render
+- HTML / CSS / JavaScript + Chart.js
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Melainin2/military_object_detection.git
-   cd AI-Detection-Dashboard
-   ```
-2. Create a Python virtual environment:
-   ```bash
-   python -m venv venv
-   ```
-3. Activate the environment:
-   - Windows PowerShell:
-     ```powershell
-     .\venv\Scripts\Activate.ps1
-     ```
-   - macOS / Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-5. Create a `.env` file from `.env.example` and set your Hugging Face token:
-   ```bash
-   copy .env.example .env
-   ```
+```bash
+git clone https://github.com/Melainin2/military_object_detection.git
+cd military_object_detection
+pip install -r requirements.txt
+```
 
 ## Usage
-
-Start the application locally:
 
 ```bash
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open your browser at:
+Open **http://localhost:8000** and upload an image.
 
-```text
-http://127.0.0.1:8000
+## API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Model status (YOLO + ViT) |
+| `/predict` | POST | Upload image, returns detections + ViT analysis |
+| `/` | GET | Frontend UI |
+| `/outputs/{file}` | GET | Annotated image |
+
+### `/predict` response
+
+```json
+{
+  "message": "Soldier Detected | No Soldier Detected",
+  "detections": [{"class_name": "...", "confidence": 0.95, "box": [x1,y1,x2,y2]}],
+  "vit_military_score": 0.96,
+  "vit_confidence": 0.86,
+  "vit_top_predictions": [{"class": "...", "probability": 0.86, "is_military": true}]
+}
 ```
 
-Then upload an image and submit it for object detection.
+## Pipeline Logic
 
-## Screenshots
+1. **ViT (ResNet50)**: Classifies image into 1000 ImageNet classes. Checks if top-20 predictions include military classes (24 ID'd via keyword/synset matching).
+2. **YOLO (ONNX)**: Detects military objects among 12 classes (soldier, tank, aircraft, etc.).
+3. **Decision**:
+   - ViT *or* YOLO finds military content → **"Soldier Detected"**
+   - Neither finds anything → **"No Soldier Detected"**
+   - ViT trumps YOLO-negative (avoids false negatives)
 
-> Add screenshots here after running the application locally.
-
-- `screenshots/demo-1.png`
-- `screenshots/demo-2.png`
-
-## Deployment
-
-### Docker
-
-Build and run with Docker:
-
-```bash
-docker build -t ai-detection-dashboard .
-docker run -p 8000:8000 ai-detection-dashboard
-```
-
-### Vercel
-
-The frontend can be deployed on Vercel as a static site from the `frontend/` folder. Use the following settings:
-
-- Framework preset: `Other`
-- Root directory: `frontend`
-- Build command: none
-- Output directory: `.`
-
-Update `frontend/index.html` to use your Render backend URL in the `BACKEND_URL` constant.
-
-### Render
-
-This repository includes `render.yaml` for a Render web service. Configure the `HF_TOKEN` secret in Render, then deploy using the dashboard.
-
-Render deployment notes (Docker vs Python runtime)
-
-- Option A — Render using Docker (common if you choose Docker on the Render dashboard):
-   - Set **Root Directory** to `backend` (or the directory that contains the `Dockerfile`).
-   - Set **Environment** to `Docker`.
-   - Ensure there is a `Dockerfile` in that root. This repository provides `backend/Dockerfile` to support the case where the service root is `backend/` and Render builds using Docker.
-   - When Root Directory is `backend`, Render will look for `Dockerfile` there; if the Dockerfile cannot be found you will get the `open Dockerfile: no such file or directory` error.
-
-- Option B — Render using the Python runtime (no Docker):
-   - Set **Environment** to `Python` (not Docker).
-   - Use these commands in Render web service settings (or via `render.yaml`):
-
-      Build Command:
-
-      ```bash
-      pip install --no-cache-dir -r requirements.txt
-      ```
-
-      Start Command:
-
-      ```bash
-      uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-      ```
-
-Choose Option A if you want full control of container image; choose Option B for a simpler Render-managed Python deployment. If Render reports `open Dockerfile: no such file or directory`, either change the service to Python runtime or ensure the `Dockerfile` exists in the selected Root Directory (this repo includes `backend/Dockerfile`).
-
-### Deployment flow
-
-- Frontend: Vercel static site from `frontend/`
-- Backend: Render service running FastAPI on `backend/main.py`
-- Set `HF_TOKEN` and `ALLOWED_ORIGINS` in Render secrets/environments
-
-## Security Recommendations
+## Security
 
 - Keep the repository private
 - Never commit `.env` or model weights
-- Do not push `uploads/` or `outputs/`
-- Use GitHub Secrets or Render environment variables for `HF_TOKEN`
+- `uploads/` and `outputs/` are gitignored
 
 ## Notes
 
-- The backend uses FastAPI, not Flask. The application is optimized for modern async deployment with Uvicorn.
+- Models download automatically on first run (YOLO ONNX from HuggingFace, ResNet50 from PyTorch)
+- ViT runs on CPU (PyTorch); GPU support available if detected
