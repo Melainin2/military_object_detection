@@ -379,12 +379,8 @@ async def predict(file: UploadFile = File(...), request: Request = None):
         yolo_found = len(detections) > 0
 
         # ── FINAL DECISION ────────────────────────────────────────────────────
-        # Rule A: ViT + YOLO (both agree) → Soldier Detected
-        # Rule B: YOLO only → Soldier Detected
-        # Rule C: ViT only → Soldier Detected (ViT trumps YOLO)
-        # Rule D: Neither → No Soldier Detected
         military_found = vit_approved or yolo_found
-        message = "Soldier Detected" if military_found else "No Soldier Detected"
+        message = "Objects Detected" if military_found else "No Objects Detected"
 
         total_ms = (time.time() - req_start) * 1000
         logger.info(

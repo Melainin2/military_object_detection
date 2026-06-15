@@ -251,13 +251,13 @@ function displayResults(data, elapsed) {
     const resultBox = document.getElementById("result");
     let html = `<small style="opacity:0.6">⏱ ${elapsed}s</small><br>`;
 
-    const isSoldier = data.message && data.message.startsWith("Soldier");
+    const isSoldier = data.message && data.message.startsWith("Objects");
     if (!isSoldier) {
-        resultBox.innerHTML = html + "❌ No Soldier Detected";
+        resultBox.innerHTML = html + "❌ No Objects Detected";
         return;
     }
 
-    html += "✅ Soldier Detected:<br><br>";
+    html += "✅ Objects Detected:<br><br>";
     if (data.detections && data.detections.length > 0) {
         data.detections.forEach(det => {
             html += `<p>🎯 <b>${det.class_name}</b> (${(det.confidence * 100).toFixed(1)}%)</p>`;
@@ -274,6 +274,11 @@ function displayDetection(data) {
     const detectionImg = document.getElementById("detection");
     if (data.image_url && data.detections && data.detections.length > 0) {
         detectionImg.onload = function() { this.style.display = "block"; };
+        detectionImg.onerror = function() {
+            this.style.display = "none";
+            document.getElementById("result").innerHTML +=
+                '<br><small style="color:orange">⚠ Detection image unavailable</small>';
+        };
         detectionImg.src = BACKEND_URL + data.image_url;
     } else {
         detectionImg.style.display = "none";
