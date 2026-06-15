@@ -9,11 +9,14 @@
 
 <script>
 // ============================================================
-// Configuration
+// CONFIGURATION — Set BACKEND_URL before deploying to Vercel
 // ============================================================
-// For local development, keep as empty string (API is same origin)
-// For production (Vercel), set to your Render backend URL:
-//   const BACKEND_URL = "https://your-app.onrender.com";
+// Local dev: keep "" (same origin, uvicorn serves all)
+// Production (Vercel frontend + Render backend):
+//   1. Deploy Render first → get URL like "https://xxx.onrender.com"
+//   2. Set BACKEND_URL below to that URL
+//   3. Then deploy Vercel
+// Example: const BACKEND_URL = "https://ai-detection-dashboard.onrender.com";
 // ============================================================
 const BACKEND_URL = "";
 </script>
