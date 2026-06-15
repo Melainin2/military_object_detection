@@ -248,15 +248,20 @@ function displayResults(data, elapsed) {
     const resultBox = document.getElementById("result");
     let html = `<small style="opacity:0.6">⏱ ${elapsed}s</small><br>`;
 
-    if (!data.detections || data.detections.length === 0) {
+    const isSoldier = data.message && data.message.startsWith("Soldier");
+    if (!isSoldier) {
         resultBox.innerHTML = html + "❌ No Soldier Detected";
         return;
     }
 
     html += "✅ Soldier Detected:<br><br>";
-    data.detections.forEach(det => {
-        html += `<p>🎯 <b>${det.class_name}</b> (${(det.confidence * 100).toFixed(1)}%)</p>`;
-    });
+    if (data.detections && data.detections.length > 0) {
+        data.detections.forEach(det => {
+            html += `<p>🎯 <b>${det.class_name}</b> (${(det.confidence * 100).toFixed(1)}%)</p>`;
+        });
+    } else {
+        html += `<small style="opacity:0.7">(ViT classification only — no bounding boxes)</small>`;
+    }
     resultBox.innerHTML = html;
 }
 </script>
@@ -264,7 +269,7 @@ function displayResults(data, elapsed) {
 <script>
 function displayDetection(data) {
     const detectionImg = document.getElementById("detection");
-    if (data.image_url) {
+    if (data.image_url && data.detections && data.detections.length > 0) {
         detectionImg.onload = function() { this.style.display = "block"; };
         detectionImg.src = BACKEND_URL + data.image_url;
     } else {
